@@ -1,19 +1,34 @@
 package proto
 
-//Multiplexed Sharded Protocol
+// Multiplexed Sharded Protocol
+type FrameType = uint8
 
-type Session struct {
-	ID         uint16
-	RoutinSeed uint16
-	Partition  uint16
-}
+const (
+	FrameSessionOpen  FrameType = 0x01
+	FrameData         FrameType = 0x02
+	FrameFin          FrameType = 0x03
+	FrameRST          FrameType = 0x04
+	FrameWindowUpdate FrameType = 0x05
+
+	FramePing FrameType = 0x10
+	FramePong FrameType = 0x11
+
+	FrameGoAway FrameType = 0x12
+)
 
 // client streams = IDs impairs
 // server streams = IDs pairs
 type Header struct {
-	Type     uint8
-	Flags    uint8
-	StreamID uint16
-	Length   uint64
-	Reserved uint16
+	Type      FrameType
+	Flags     uint8
+	SessionID uint16
+	StreamID  uint16
+	Length    uint64
+	Reserved  uint16
 }
+
+type Frame struct {
+	Header Header
+	Data   []byte
+}
+

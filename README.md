@@ -83,7 +83,8 @@ go run ./example
 # then point a browser or curl at 127.0.0.1:9001 as a SOCKS5 proxy
 ```
 
-## Known limitations / todo list
+## Known limitations
+> work todo 
 
 - **No client-side reconciliation loop**: if a partition drops mid-session, `Client.PartitionDown` reports it, but nothing redials to bring the partition count back to the original target.
 - **No dynamic resizing on the server**: partitions are only ever added or removed wholesale (session teardown), not safely churned up and down mid-session — `Session.RemovePartition` shifts partition indices, which would remap in-flight streams if partitions kept churning.

@@ -73,6 +73,11 @@ func (s *Server) handleConn(conn net.Conn) {
 	}
 
 	session.RemovePartition(conn)
+
+	if session.GetCurrentPartition() <= 0 {
+		session.Close()
+		s.Sessions.CompareAndDelete(sessionID, session)
+	}
 }
 
 // AcceptSession blocks until a new client session is established.

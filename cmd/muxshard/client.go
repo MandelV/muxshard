@@ -15,7 +15,7 @@ func runClient(addr string, partitionCount int) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("client: session RoutinSeed=%d, %d connections open", client.RoutinSeed, client.CurrentPartition)
+	log.Printf("client: session RoutinSeed=%d, %d connections open", client.RoutinSeed, client.GetCurrentPartition())
 
 	go acceptServerStreams(client.Session)
 
@@ -30,7 +30,7 @@ func runClient(addr string, partitionCount int) error {
 		go func() {
 			defer wg.Done()
 
-			partition := internal.Score(uint64(client.RoutinSeed), uint64(stream.ID), uint64(client.CurrentPartition))
+			partition := internal.Score(uint64(client.RoutinSeed), uint64(stream.ID), uint64(client.GetCurrentPartition()))
 			log.Printf("client: stream %d -> partition %d", stream.ID, partition)
 
 			if _, err := stream.Write([]byte(fmt.Sprintf("hello from stream %d", stream.ID))); err != nil {

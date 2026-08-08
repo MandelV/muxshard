@@ -16,20 +16,20 @@ import (
 A Session multiplexes many logical Streams over several underlying
 TCP connections, called partitions. Session itself is agnostic about
 how many partitions there should be — it only tracks how many are
-currently live (CurrentPartition) and routes with whatever that is.
+currently live (currentPartition) and routes with whatever that is.
 Keeping the live count matched to a target is the caller's job: the
 server is a listener, its partitions simply arrive as clients dial in;
 the client is the one that knows how many it wants open and will be
-responsible for reconciling CurrentPartition against that target
+responsible for reconciling currentPartition against that target
 (not implemented yet).
 */
 type Session struct {
 	ID               uint16
 	RoutinSeed       uint16
-	CurrentPartition int
+	currentPartition int
 
 	partitions  []*partitionConn
-	partitionMU sync.Mutex
+	partitionMU sync.RWMutex
 
 	streamsChan chan *Stream
 	streams     sync.Map
@@ -73,6 +73,12 @@ func NewSession(id uint16, clientSide bool) *Session {
 	}
 }
 
+func (s *Session) GetCurrentPartition() int {
+	s.partitionMU.RLock()
+	defer s.partitionMU.RUnlock()
+	return s.currentPartition
+}
+
 // AddPartition registers conn as a new partition of the session and
 // returns its index. Callers are expected to also run SendLoop and
 // RecvLoop on conn.
@@ -81,7 +87,7 @@ func (s *Session) AddPartition(conn net.Conn) int {
 	defer s.partitionMU.Unlock()
 
 	s.partitions = append(s.partitions, &partitionConn{conn: conn, send: make(chan protocol.Frame, 64)})
-	s.CurrentPartition = len(s.partitions)
+	s.currentPartition = len(s.partitions)
 
 	return len(s.partitions) - 1
 }
@@ -104,8 +110,8 @@ func (s *Session) RemovePartition(conn net.Conn) int {
 	}
 	pc := s.partitions[i]
 	s.partitions = slices.Delete(s.partitions, i, i+1)
-	s.CurrentPartition = len(s.partitions)
-	count := s.CurrentPartition
+	s.currentPartition = len(s.partitions)
+	count := s.currentPartition
 	s.partitionMU.Unlock()
 
 	pc.mu.Lock()
@@ -122,7 +128,7 @@ func (s *Session) Close() error {
 	s.partitionMU.Lock()
 	partitions := s.partitions
 	s.partitions = nil
-	s.CurrentPartition = 0
+	s.currentPartition = 0
 	s.partitionMU.Unlock()
 
 	for _, pc := range partitions {
@@ -157,7 +163,7 @@ func (s *Session) send(partition uint32, f protocol.Frame) error {
 
 func (s *Session) sendFrame(streamID uint16, frameType protocol.FrameType, data []byte) error {
 	s.partitionMU.Lock()
-	cp := s.CurrentPartition
+	cp := s.currentPartition
 	s.partitionMU.Unlock()
 
 	partition := Score(uint64(s.RoutinSeed), uint64(streamID), uint64(cp))
@@ -174,7 +180,7 @@ func (s *Session) partitionConnFor(streamID uint16) (net.Conn, error) {
 	s.partitionMU.Lock()
 	defer s.partitionMU.Unlock()
 
-	partition := Score(uint64(s.RoutinSeed), uint64(streamID), uint64(s.CurrentPartition))
+	partition := Score(uint64(s.RoutinSeed), uint64(streamID), uint64(s.currentPartition))
 	if int(partition) >= len(s.partitions) {
 		return nil, fmt.Errorf("proto: session %d: unknown partition %d", s.ID, partition)
 	}

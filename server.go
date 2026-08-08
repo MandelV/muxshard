@@ -48,7 +48,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		conn.Close()
 		return
 	}
-	if open.Header.Type != protocol.FrameSessionOpen {
+	if open.Header.Type != protocol.FrameSessionOpenPartition {
 		log.Printf("muxshard: expected FrameOpen from %s, got type %d", conn.RemoteAddr(), open.Header.Type)
 		conn.Close()
 		return

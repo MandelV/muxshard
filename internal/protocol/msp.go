@@ -4,11 +4,11 @@ package protocol
 type FrameType = uint8
 
 const (
-	FrameSessionOpen  FrameType = 0x01
-	FrameData         FrameType = 0x02
-	FrameFin          FrameType = 0x03
-	FrameRST          FrameType = 0x04
-	FrameWindowUpdate FrameType = 0x05
+	FrameSessionOpenPartition FrameType = 0x01
+	FrameData                 FrameType = 0x02
+	FrameFin                  FrameType = 0x03
+	FrameRST                  FrameType = 0x04
+	FrameWindowUpdate         FrameType = 0x05
 
 	FramePing FrameType = 0x10
 	FramePong FrameType = 0x11

@@ -31,4 +31,3 @@ type Frame struct {
 	Header Header
 	Data   []byte
 }
-

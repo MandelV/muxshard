@@ -39,7 +39,7 @@ type Client struct {
 // starts SendLoop/RecvLoop pumping frames for every one of them. The
 // returned Client is immediately ready for OpenStream/AcceptStream.
 func NewClient(addr string, partitionCount int) (*Client, error) {
-	session := internal.NewSession(uint16(rand.IntN(1<<16)), uint16(rand.IntN(1<<16)), true)
+	session := internal.NewSession(uint16(rand.IntN(1<<16)), true)
 	c := &Client{
 		Session:       session,
 		PartitionDown: make(chan PartitionDown, partitionCount),

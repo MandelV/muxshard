@@ -52,7 +52,14 @@ type partitionConn struct {
 // NewSession creates a Session ready to accept and open streams.
 // clientSide picks the parity of locally-opened stream IDs (odd for
 // clients, even for servers), matching the convention on Header.
-func NewSession(id, routinSeed uint16, clientSide bool) *Session {
+//
+// RoutinSeed is derived from id rather than taken as a parameter: id
+// is exchanged as-is in the handshake, so both peers' Session for the
+// same logical session end up with the same seed and therefore route
+// a given StreamID to the same partition index on both sides — purely
+// for consistency/debuggability, since each side only ever needs its
+// own routing to be self-consistent.
+func NewSession(id uint16, clientSide bool) *Session {
 	start := uint16(2)
 	if clientSide {
 		start = 1
@@ -60,7 +67,7 @@ func NewSession(id, routinSeed uint16, clientSide bool) *Session {
 
 	return &Session{
 		ID:           id,
-		RoutinSeed:   routinSeed,
+		RoutinSeed:   id,
 		streamsChan:  make(chan *Stream, 1024),
 		nextStreamID: start,
 	}
@@ -149,7 +156,11 @@ func (s *Session) send(partition uint32, f protocol.Frame) error {
 }
 
 func (s *Session) sendFrame(streamID uint16, frameType protocol.FrameType, data []byte) error {
-	partition := Score(uint64(s.RoutinSeed), uint64(streamID), uint64(s.CurrentPartition))
+	s.partitionMU.Lock()
+	cp := s.CurrentPartition
+	s.partitionMU.Unlock()
+
+	partition := Score(uint64(s.RoutinSeed), uint64(streamID), uint64(cp))
 	return s.send(uint32(partition), protocol.Frame{
 		Header: protocol.Header{Type: frameType, SessionID: s.ID, StreamID: streamID},
 		Data:   data,

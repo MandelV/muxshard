@@ -55,7 +55,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	}
 
 	sessionID := open.Header.SessionID
-	actual, loaded := s.Sessions.LoadOrStore(sessionID, internal.NewSession(sessionID, 0, false))
+	actual, loaded := s.Sessions.LoadOrStore(sessionID, internal.NewSession(sessionID, false))
 	session := actual.(*internal.Session)
 	if !loaded {
 		s.sessionChan <- session

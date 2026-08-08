@@ -45,13 +45,13 @@ func NewClient(addr string, partitionCount int) (*Client, error) {
 		PartitionDown: make(chan PartitionDown, partitionCount),
 	}
 
-	for i := 0; i < partitionCount; i++ {
+	for i := range partitionCount {
 		conn, err := net.Dial("tcp", addr)
 		if err != nil {
 			return nil, fmt.Errorf("muxshard: dial partition %d: %w", i, err)
 		}
 
-		open := protocol.Frame{Header: protocol.Header{Type: protocol.FrameSessionOpen, SessionID: session.ID}}
+		open := protocol.Frame{Header: protocol.Header{Type: protocol.FrameSessionOpenPartition, SessionID: session.ID}}
 		if _, err := protocol.WriteFrame(conn, open); err != nil {
 			return nil, fmt.Errorf("muxshard: handshake on partition %d: %w", i, err)
 		}

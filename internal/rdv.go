@@ -1,6 +1,6 @@
 package internal
 
-func Score(seed, StreamID, partitionCount uint64) uint64 {
+func Shard(seed, StreamID, partitionCount uint64) uint64 {
 	if partitionCount == 0 {
 		return 0
 	}

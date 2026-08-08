@@ -30,7 +30,7 @@ func runClient(addr string, partitionCount int) error {
 		go func() {
 			defer wg.Done()
 
-			partition := internal.Score(uint64(client.RoutinSeed), uint64(stream.ID), uint64(client.GetCurrentPartition()))
+			partition := internal.Shard(uint64(client.RoutinSeed), uint64(stream.ID), uint64(client.GetCurrentPartition()))
 			log.Printf("client: stream %d -> partition %d", stream.ID, partition)
 
 			if _, err := stream.Write([]byte(fmt.Sprintf("hello from stream %d", stream.ID))); err != nil {

@@ -166,7 +166,7 @@ func (s *Session) sendFrame(streamID uint16, frameType protocol.FrameType, data 
 	cp := s.currentPartition
 	s.partitionMU.Unlock()
 
-	partition := Score(uint64(s.RoutinSeed), uint64(streamID), uint64(cp))
+	partition := Shard(uint64(s.RoutinSeed), uint64(streamID), uint64(cp))
 	return s.send(uint32(partition), protocol.Frame{
 		Header: protocol.Header{Type: frameType, SessionID: s.ID, StreamID: streamID},
 		Data:   data,
@@ -180,7 +180,7 @@ func (s *Session) partitionConnFor(streamID uint16) (net.Conn, error) {
 	s.partitionMU.Lock()
 	defer s.partitionMU.Unlock()
 
-	partition := Score(uint64(s.RoutinSeed), uint64(streamID), uint64(s.currentPartition))
+	partition := Shard(uint64(s.RoutinSeed), uint64(streamID), uint64(s.currentPartition))
 	if int(partition) >= len(s.partitions) {
 		return nil, fmt.Errorf("proto: session %d: unknown partition %d", s.ID, partition)
 	}

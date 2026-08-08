@@ -13,14 +13,19 @@ import (
 	Session
 
 A Session multiplexes many logical Streams over several underlying
-TCP connections, called partitions. Which partition carries a given
-stream is decided once by Score(RoutinSeed, StreamID, PartitionCount)
-and never changes for the life of that stream.
+TCP connections, called partitions. Session itself is agnostic about
+how many partitions there should be — it only tracks how many are
+currently live (CurrentPartition) and routes with whatever that is.
+Keeping the live count matched to a target is the caller's job: the
+server is a listener, its partitions simply arrive as clients dial in;
+the client is the one that knows how many it wants open and will be
+responsible for reconciling CurrentPartition against that target
+(not implemented yet).
 */
 type Session struct {
-	ID             uint16
-	RoutinSeed     uint16
-	PartitionCount uint16
+	ID               uint16
+	RoutinSeed       uint16
+	CurrentPartition int
 
 	partitions  []*partitionConn
 	partitionMU sync.Mutex
@@ -35,23 +40,28 @@ type Session struct {
 type partitionConn struct {
 	conn net.Conn
 	send chan Frame
+
+	// mu/closed guard send against racing with RemovePartition/Close:
+	// without them, a send could land on pc.send after it's been
+	// closed, which panics.
+	mu     sync.Mutex
+	closed bool
 }
 
 // NewSession creates a Session ready to accept and open streams.
 // clientSide picks the parity of locally-opened stream IDs (odd for
 // clients, even for servers), matching the convention on Header.
-func NewSession(id, routinSeed, partitionCount uint16, clientSide bool) *Session {
+func NewSession(id, routinSeed uint16, clientSide bool) *Session {
 	start := uint16(2)
 	if clientSide {
 		start = 1
 	}
 
 	return &Session{
-		ID:             id,
-		RoutinSeed:     routinSeed,
-		PartitionCount: partitionCount,
-		streamsChan:    make(chan *Stream, 32),
-		nextStreamID:   start,
+		ID:           id,
+		RoutinSeed:   routinSeed,
+		streamsChan:  make(chan *Stream, 1024),
+		nextStreamID: start,
 	}
 }
 
@@ -62,7 +72,8 @@ func (s *Session) AddPartition(conn net.Conn) int {
 	s.partitionMU.Lock()
 	defer s.partitionMU.Unlock()
 
-	s.partitions = append(s.partitions, &partitionConn{conn: conn, send: make(chan Frame, 16)})
+	s.partitions = append(s.partitions, &partitionConn{conn: conn, send: make(chan Frame, 64)})
+	s.CurrentPartition = len(s.partitions)
 
 	return len(s.partitions) - 1
 }
@@ -75,29 +86,43 @@ func (s *Session) AddPartition(conn net.Conn) int {
 // indices will silently start targeting a different physical
 // connection. Fine for a partition set that only shrinks at session
 // teardown; not safe yet for partitions churning mid-session.
-func (s *Session) RemovePartition(conn net.Conn) {
+func (s *Session) RemovePartition(conn net.Conn) int {
 	s.partitionMU.Lock()
-	defer s.partitionMU.Unlock()
-
 	i := slices.IndexFunc(s.partitions, func(pc *partitionConn) bool { return pc.conn == conn })
 	if i < 0 {
-		return
+		count := len(s.partitions)
+		s.partitionMU.Unlock()
+		return count
 	}
-
-	close(s.partitions[i].send)
+	pc := s.partitions[i]
 	s.partitions = slices.Delete(s.partitions, i, i+1)
+	s.CurrentPartition = len(s.partitions)
+	count := s.CurrentPartition
+	s.partitionMU.Unlock()
+
+	pc.mu.Lock()
+	pc.closed = true
+	close(pc.send)
+	pc.mu.Unlock()
+
+	return count
 }
 
 // Close stops every partition's SendLoop by closing its send channel.
 // Each SendLoop drains pending frames and closes its own net.Conn.
 func (s *Session) Close() error {
 	s.partitionMU.Lock()
-	defer s.partitionMU.Unlock()
-
-	for _, pc := range s.partitions {
-		close(pc.send)
-	}
+	partitions := s.partitions
 	s.partitions = nil
+	s.CurrentPartition = 0
+	s.partitionMU.Unlock()
+
+	for _, pc := range partitions {
+		pc.mu.Lock()
+		pc.closed = true
+		close(pc.send)
+		pc.mu.Unlock()
+	}
 
 	return nil
 }
@@ -111,16 +136,37 @@ func (s *Session) send(partition uint32, f Frame) error {
 	pc := s.partitions[partition]
 	s.partitionMU.Unlock()
 
+	pc.mu.Lock()
+	defer pc.mu.Unlock()
+
+	if pc.closed {
+		return fmt.Errorf("proto: session %d: partition %d closed", s.ID, partition)
+	}
+
 	pc.send <- f
 	return nil
 }
 
 func (s *Session) sendFrame(streamID uint16, frameType FrameType, data []byte) error {
-	partition := Score(uint64(s.RoutinSeed), uint64(streamID), uint64(s.PartitionCount))
+	partition := Score(uint64(s.RoutinSeed), uint64(streamID), uint64(s.CurrentPartition))
 	return s.send(uint32(partition), Frame{
 		Header: Header{Type: frameType, SessionID: s.ID, StreamID: streamID},
 		Data:   data,
 	})
+}
+
+// partitionConnFor returns the net.Conn a stream's frames are
+// currently routed to — same Score() computation as sendFrame, so it
+// always reflects where the next Write would actually go.
+func (s *Session) partitionConnFor(streamID uint16) (net.Conn, error) {
+	s.partitionMU.Lock()
+	defer s.partitionMU.Unlock()
+
+	partition := Score(uint64(s.RoutinSeed), uint64(streamID), uint64(s.CurrentPartition))
+	if int(partition) >= len(s.partitions) {
+		return nil, fmt.Errorf("proto: session %d: unknown partition %d", s.ID, partition)
+	}
+	return s.partitions[partition].conn, nil
 }
 
 // getOrCreateStream returns the Stream for streamID, creating it (and
@@ -162,13 +208,9 @@ func (s *Session) handleStreamMessage(f Frame) {
 	switch f.Header.Type {
 	case FrameData:
 		_ = s.getOrCreateStream(f.Header.StreamID).deliver(f.Data)
-	case FrameFin:
+	case FrameFin, FrameRST:
 		if v, ok := s.streams.Load(f.Header.StreamID); ok {
-			v.(*Stream).closeRemote(nil)
-		}
-	case FrameRST:
-		if v, ok := s.streams.Load(f.Header.StreamID); ok {
-			v.(*Stream).closeRemote(io.ErrClosedPipe)
+			v.(*Stream).closeRemote()
 		}
 	}
 }

@@ -1,72 +1,93 @@
-package main
+package muxshard
 
 import (
 	"fmt"
 	"log"
+	"math/rand/v2"
 	"net"
 	"sync"
+	"sync/atomic"
 
 	"muxshard/proto"
 )
 
-const demoStreamCount = 10
+// PartitionDown reports that one of a Client's partitions stopped
+// carrying traffic unexpectedly (its RecvLoop returned).
+type PartitionDown struct {
+	Partition int
+	Err       error
+}
 
-func runClient(addr string, partitionCount int) error {
-	session := proto.NewSession(1, 65412, uint16(partitionCount), true) //uint16(rand.IntN(1 << 16))
+// Client dials and manages the partitions of a Session it opened.
+// *Client promotes *proto.Session, so OpenStream/AcceptStream work
+// directly on it.
+type Client struct {
+	*proto.Session
 
-	var sendWG sync.WaitGroup
+	sendWG  sync.WaitGroup
+	closing atomic.Bool
+
+	// PartitionDown receives an event whenever a partition drops
+	// outside of Close (e.g. the underlying TCP connection died).
+	// Reconciling CurrentPartition back up to a target by redialing is
+	// not implemented yet — this only gives visibility into it happening.
+	PartitionDown chan PartitionDown
+}
+
+// NewClient dials partitionCount TCP connections to addr, opens a new
+// session (handshaking each connection as one of its partitions), and
+// starts SendLoop/RecvLoop pumping frames for every one of them. The
+// returned Client is immediately ready for OpenStream/AcceptStream.
+func NewClient(addr string, partitionCount int) (*Client, error) {
+	session := proto.NewSession(uint16(rand.IntN(1<<16)), uint16(rand.IntN(1<<16)), true)
+	c := &Client{
+		Session:       session,
+		PartitionDown: make(chan PartitionDown, partitionCount),
+	}
+
 	for i := 0; i < partitionCount; i++ {
 		conn, err := net.Dial("tcp", addr)
 		if err != nil {
-			return fmt.Errorf("client: dial partition %d: %w", i, err)
+			return nil, fmt.Errorf("muxshard: dial partition %d: %w", i, err)
 		}
 
 		open := proto.Frame{Header: proto.Header{Type: proto.FrameSessionOpen, SessionID: session.ID}}
 		if _, err := proto.WriteFrame(conn, open); err != nil {
-			return fmt.Errorf("client: open handshake on partition %d: %w", i, err)
+			return nil, fmt.Errorf("muxshard: handshake on partition %d: %w", i, err)
 		}
 
 		partition := session.AddPartition(conn)
 
-		sendWG.Add(1)
+		c.sendWG.Add(1)
 		go func() {
-			defer sendWG.Done()
-			if err := session.SendLoop(conn, uint32(partition)); err != nil {
-				log.Printf("client: partition %d send: %v", partition, err)
-			}
+			defer c.sendWG.Done()
+			session.SendLoop(conn, uint32(partition))
 		}()
 		go func() {
-			if err := session.RecvLoop(conn, uint32(partition)); err != nil {
-				log.Printf("client: partition %d recv: %v", partition, err)
-			}
+			err := session.RecvLoop(conn, uint32(partition))
 			session.RemovePartition(conn)
-		}()
-	}
-	log.Printf("client: session RoutinSeed=%d, %d connections open", session.RoutinSeed, session.PartitionCount)
 
-	var wg sync.WaitGroup
-	for i := 0; i < demoStreamCount; i++ {
-		stream, err := session.OpenStream()
-		if err != nil {
-			return fmt.Errorf("client: open stream %d: %w", i, err)
-		}
+			if c.closing.Load() {
+				return
+			}
 
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
-			partition := proto.Score(uint64(session.RoutinSeed), uint64(stream.ID), uint64(session.PartitionCount))
-			log.Printf("client: stream %d -> partition %d", stream.ID, partition)
-
-			if _, err := stream.Write([]byte(fmt.Sprintf("hello from stream %d", stream.ID))); err != nil {
-				log.Printf("client: write stream %d: %v", stream.ID, err)
+			log.Printf("muxshard: session %d: partition %d down: %v", session.ID, partition, err)
+			select {
+			case c.PartitionDown <- PartitionDown{Partition: partition, Err: err}:
+			default:
 			}
 		}()
 	}
-	wg.Wait() // every Write() has enqueued its frame
 
-	session.Close() // close each partition's send channel
-	sendWG.Wait()   // wait until every SendLoop has actually flushed to the socket
+	return c, nil
+}
 
-	return nil
+// Close tears down every partition and blocks until each SendLoop has
+// actually flushed its pending frames to the socket, so no data
+// enqueued right before Close is silently dropped.
+func (c *Client) Close() error {
+	c.closing.Store(true)
+	err := c.Session.Close()
+	c.sendWG.Wait()
+	return err
 }

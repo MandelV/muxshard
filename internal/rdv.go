@@ -1,4 +1,4 @@
-package proto
+package internal
 
 func Score(seed, StreamID, partitionCount uint64) uint64 {
 	if partitionCount == 0 {

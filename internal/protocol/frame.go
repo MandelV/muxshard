@@ -1,4 +1,4 @@
-package proto
+package protocol
 
 import (
 	"bytes"
@@ -8,6 +8,11 @@ import (
 
 // Type + Flags + SessionID + StreamID + Length + Reserved
 const headerSize = 1 + 1 + 2 + 2 + 8 + 2
+
+type Frame struct {
+	Header Header
+	Data   []byte
+}
 
 func WriteFrame(w io.Writer, f Frame) (n int, err error) {
 	f.Header.Length = uint64(len(f.Data))

@@ -4,11 +4,11 @@ import (
 	"fmt"
 	"log"
 	"math/rand/v2"
+	"muxshard/internal"
+	"muxshard/internal/protocol"
 	"net"
 	"sync"
 	"sync/atomic"
-
-	"muxshard/proto"
 )
 
 // PartitionDown reports that one of a Client's partitions stopped
@@ -22,7 +22,7 @@ type PartitionDown struct {
 // *Client promotes *proto.Session, so OpenStream/AcceptStream work
 // directly on it.
 type Client struct {
-	*proto.Session
+	*internal.Session
 
 	sendWG  sync.WaitGroup
 	closing atomic.Bool
@@ -39,7 +39,7 @@ type Client struct {
 // starts SendLoop/RecvLoop pumping frames for every one of them. The
 // returned Client is immediately ready for OpenStream/AcceptStream.
 func NewClient(addr string, partitionCount int) (*Client, error) {
-	session := proto.NewSession(uint16(rand.IntN(1<<16)), uint16(rand.IntN(1<<16)), true)
+	session := internal.NewSession(uint16(rand.IntN(1<<16)), uint16(rand.IntN(1<<16)), true)
 	c := &Client{
 		Session:       session,
 		PartitionDown: make(chan PartitionDown, partitionCount),
@@ -51,8 +51,8 @@ func NewClient(addr string, partitionCount int) (*Client, error) {
 			return nil, fmt.Errorf("muxshard: dial partition %d: %w", i, err)
 		}
 
-		open := proto.Frame{Header: proto.Header{Type: proto.FrameSessionOpen, SessionID: session.ID}}
-		if _, err := proto.WriteFrame(conn, open); err != nil {
+		open := protocol.Frame{Header: protocol.Header{Type: protocol.FrameSessionOpen, SessionID: session.ID}}
+		if _, err := protocol.WriteFrame(conn, open); err != nil {
 			return nil, fmt.Errorf("muxshard: handshake on partition %d: %w", i, err)
 		}
 

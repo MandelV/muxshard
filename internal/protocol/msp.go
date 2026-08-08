@@ -1,4 +1,4 @@
-package proto
+package protocol
 
 // Multiplexed Sharded Protocol
 type FrameType = uint8
@@ -25,9 +25,4 @@ type Header struct {
 	StreamID  uint16
 	Length    uint64
 	Reserved  uint16
-}
-
-type Frame struct {
-	Header Header
-	Data   []byte
 }

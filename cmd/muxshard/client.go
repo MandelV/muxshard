@@ -3,10 +3,9 @@ package main
 import (
 	"fmt"
 	"log"
-	"sync"
-
 	"muxshard"
-	"muxshard/proto"
+	"muxshard/internal"
+	"sync"
 )
 
 const demoStreamCount = 10
@@ -31,7 +30,7 @@ func runClient(addr string, partitionCount int) error {
 		go func() {
 			defer wg.Done()
 
-			partition := proto.Score(uint64(client.RoutinSeed), uint64(stream.ID), uint64(client.CurrentPartition))
+			partition := internal.Score(uint64(client.RoutinSeed), uint64(stream.ID), uint64(client.CurrentPartition))
 			log.Printf("client: stream %d -> partition %d", stream.ID, partition)
 
 			if _, err := stream.Write([]byte(fmt.Sprintf("hello from stream %d", stream.ID))); err != nil {
@@ -47,14 +46,14 @@ func runClient(addr string, partitionCount int) error {
 // acceptServerStreams receives streams the server opens toward us
 // (bidirectionality test): the client never asked for these, it just
 // reacts as they arrive, same as the server does for ours.
-func acceptServerStreams(session *proto.Session) {
+func acceptServerStreams(session *internal.Session) {
 	for {
 		stream := session.AcceptStream()
 		go logServerStream(stream)
 	}
 }
 
-func logServerStream(stream *proto.Stream) {
+func logServerStream(stream *internal.Stream) {
 	buf := make([]byte, 4096)
 	for {
 		n, err := stream.Read(buf)

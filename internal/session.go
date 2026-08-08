@@ -1,9 +1,10 @@
-package proto
+package internal
 
 import (
 	"errors"
 	"fmt"
 	"io"
+	"muxshard/internal/protocol"
 	"net"
 	"slices"
 	"sync"
@@ -39,7 +40,7 @@ type Session struct {
 
 type partitionConn struct {
 	conn net.Conn
-	send chan Frame
+	send chan protocol.Frame
 
 	// mu/closed guard send against racing with RemovePartition/Close:
 	// without them, a send could land on pc.send after it's been
@@ -72,7 +73,7 @@ func (s *Session) AddPartition(conn net.Conn) int {
 	s.partitionMU.Lock()
 	defer s.partitionMU.Unlock()
 
-	s.partitions = append(s.partitions, &partitionConn{conn: conn, send: make(chan Frame, 64)})
+	s.partitions = append(s.partitions, &partitionConn{conn: conn, send: make(chan protocol.Frame, 64)})
 	s.CurrentPartition = len(s.partitions)
 
 	return len(s.partitions) - 1
@@ -127,7 +128,7 @@ func (s *Session) Close() error {
 	return nil
 }
 
-func (s *Session) send(partition uint32, f Frame) error {
+func (s *Session) send(partition uint32, f protocol.Frame) error {
 	s.partitionMU.Lock()
 	if int(partition) >= len(s.partitions) {
 		s.partitionMU.Unlock()
@@ -147,10 +148,10 @@ func (s *Session) send(partition uint32, f Frame) error {
 	return nil
 }
 
-func (s *Session) sendFrame(streamID uint16, frameType FrameType, data []byte) error {
+func (s *Session) sendFrame(streamID uint16, frameType protocol.FrameType, data []byte) error {
 	partition := Score(uint64(s.RoutinSeed), uint64(streamID), uint64(s.CurrentPartition))
-	return s.send(uint32(partition), Frame{
-		Header: Header{Type: frameType, SessionID: s.ID, StreamID: streamID},
+	return s.send(uint32(partition), protocol.Frame{
+		Header: protocol.Header{Type: frameType, SessionID: s.ID, StreamID: streamID},
 		Data:   data,
 	})
 }
@@ -204,11 +205,11 @@ func (s *Session) AcceptStream() *Stream {
 	return <-s.streamsChan
 }
 
-func (s *Session) handleStreamMessage(f Frame) {
+func (s *Session) handleStreamMessage(f protocol.Frame) {
 	switch f.Header.Type {
-	case FrameData:
+	case protocol.FrameData:
 		_ = s.getOrCreateStream(f.Header.StreamID).deliver(f.Data)
-	case FrameFin, FrameRST:
+	case protocol.FrameFin, protocol.FrameRST:
 		if v, ok := s.streams.Load(f.Header.StreamID); ok {
 			v.(*Stream).closeRemote()
 		}
@@ -220,7 +221,7 @@ func (s *Session) handleStreamMessage(f Frame) {
 // as session-level control messages. It returns nil on a clean EOF.
 func (s *Session) RecvLoop(conn net.Conn, partition uint32) error {
 	for {
-		f, err := ReadFrame(conn)
+		f, err := protocol.ReadFrame(conn)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil
@@ -229,12 +230,12 @@ func (s *Session) RecvLoop(conn net.Conn, partition uint32) error {
 		}
 
 		switch f.Header.Type {
-		case FrameData, FrameFin, FrameRST:
+		case protocol.FrameData, protocol.FrameFin, protocol.FrameRST:
 			s.handleStreamMessage(f)
-		case FrameGoAway:
+		case protocol.FrameGoAway:
 			return nil
-		case FramePing:
-			if err := s.send(partition, Frame{Header: Header{Type: FramePong, SessionID: s.ID}}); err != nil {
+		case protocol.FramePing:
+			if err := s.send(partition, protocol.Frame{Header: protocol.Header{Type: protocol.FramePong, SessionID: s.ID}}); err != nil {
 				return err
 			}
 		}
@@ -254,7 +255,7 @@ func (s *Session) SendLoop(conn net.Conn, partition uint32) error {
 	s.partitionMU.Unlock()
 
 	for frame := range pc.send {
-		if _, err := WriteFrame(conn, frame); err != nil {
+		if _, err := protocol.WriteFrame(conn, frame); err != nil {
 			return err
 		}
 	}

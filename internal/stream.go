@@ -1,6 +1,7 @@
-package proto
+package internal
 
 import (
+	"muxshard/internal/protocol"
 	"net"
 	"time"
 )
@@ -72,7 +73,7 @@ func (s *Stream) Write(p []byte) (int, error) {
 	data := make([]byte, len(p))
 	copy(data, p)
 
-	if err := s.session.sendFrame(s.ID, FrameData, data); err != nil {
+	if err := s.session.sendFrame(s.ID, protocol.FrameData, data); err != nil {
 		return 0, err
 	}
 	return len(p), nil
@@ -87,7 +88,7 @@ func (s *Stream) Read(p []byte) (int, error) {
 // Close signals the peer that no more data is coming and releases the
 // stream locally.
 func (s *Stream) Close() error {
-	_ = s.session.sendFrame(s.ID, FrameFin, nil)
+	_ = s.session.sendFrame(s.ID, protocol.FrameFin, nil)
 	s.feed.Close()
 	return s.local.Close()
 }

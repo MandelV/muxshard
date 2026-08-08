@@ -3,10 +3,9 @@ package main
 import (
 	"fmt"
 	"log"
-	"net"
-
 	"muxshard"
-	"muxshard/proto"
+	"muxshard/internal"
+	"net"
 )
 
 func runServer(addr string) error {
@@ -35,7 +34,7 @@ func runServer(addr string) error {
 	}
 }
 
-func acceptStreams(session *proto.Session) {
+func acceptStreams(session *internal.Session) {
 	for {
 		stream := session.AcceptStream()
 		go logStream(session.ID, stream)
@@ -45,7 +44,7 @@ func acceptStreams(session *proto.Session) {
 // greetClient opens a stream toward the client unprompted, to check
 // the server->client direction works (client.acceptServerStreams is
 // the matching AcceptStream on the other end).
-func greetClient(session *proto.Session) {
+func greetClient(session *internal.Session) {
 	stream, err := session.OpenStream()
 	if err != nil {
 		log.Printf("server: session %d: open stream: %v", session.ID, err)
@@ -58,7 +57,7 @@ func greetClient(session *proto.Session) {
 	}
 }
 
-func logStream(sessionID uint16, stream *proto.Stream) {
+func logStream(sessionID uint16, stream *internal.Stream) {
 	buf := make([]byte, 4096)
 	for {
 		n, err := stream.Read(buf)

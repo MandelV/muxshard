@@ -11,21 +11,22 @@ import (
 	"net"
 	"sync"
 
-	"muxshard/proto"
+	"muxshard/internal"
+	"muxshard/internal/protocol"
 )
 
 // Server accepts partitions dialed by Client and groups them into Sessions.
 type Server struct {
 	net.Listener
 	Sessions    sync.Map
-	sessionChan chan *proto.Session
+	sessionChan chan *internal.Session
 	Drain       bool
 }
 
 func NewServer(l net.Listener) *Server {
 	return &Server{
 		Listener:    l,
-		sessionChan: make(chan *proto.Session),
+		sessionChan: make(chan *internal.Session),
 	}
 }
 
@@ -41,21 +42,21 @@ func (s *Server) Serve() error {
 }
 
 func (s *Server) handleConn(conn net.Conn) {
-	open, err := proto.ReadFrame(conn)
+	open, err := protocol.ReadFrame(conn)
 	if err != nil {
 		log.Printf("muxshard: handshake read error from %s: %v", conn.RemoteAddr(), err)
 		conn.Close()
 		return
 	}
-	if open.Header.Type != proto.FrameSessionOpen {
+	if open.Header.Type != protocol.FrameSessionOpen {
 		log.Printf("muxshard: expected FrameOpen from %s, got type %d", conn.RemoteAddr(), open.Header.Type)
 		conn.Close()
 		return
 	}
 
 	sessionID := open.Header.SessionID
-	actual, loaded := s.Sessions.LoadOrStore(sessionID, proto.NewSession(sessionID, 0, false))
-	session := actual.(*proto.Session)
+	actual, loaded := s.Sessions.LoadOrStore(sessionID, internal.NewSession(sessionID, 0, false))
+	session := actual.(*internal.Session)
 	if !loaded {
 		s.sessionChan <- session
 	}
@@ -75,6 +76,6 @@ func (s *Server) handleConn(conn net.Conn) {
 }
 
 // AcceptSession blocks until a new client session is established.
-func (s *Server) AcceptSession() *proto.Session {
+func (s *Server) AcceptSession() *internal.Session {
 	return <-s.sessionChan
 }
